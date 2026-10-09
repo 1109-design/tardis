@@ -6,7 +6,7 @@
 
 Your production database is *over there*. You need it *right here*. Normally that means SSH, `mysqldump`, `gzip`, `scp`, `gunzip`, `mysql`, and at least one typo that ruins your afternoon.
 
-TARDIS is a desktop app for Ubuntu Linux that does the whole trip in one click — pull from production, push to a test server, or import locally — while you watch the bytes fly through a small time vortex. Like its namesake, it's bigger on the inside.
+TARDIS is a desktop app for Linux, Windows, and macOS that does the whole trip in one click — pull from production, push to a test server, or import locally — while you watch the bytes fly through a small time vortex. Like its namesake, it's bigger on the inside.
 
 Built with [Wails v2](https://wails.io), Go, and React.
 
@@ -123,7 +123,7 @@ Pick .sql / .sql.gz → gunzip | mysql → imported into local DB
 The `.deb` is a few MB. The databases it moves are not. So yes.
 
 **Does it work on Windows/macOS?**
-It's built for Ubuntu Linux. It might compile elsewhere. So might a lot of things.
+It started on Ubuntu Linux, but Windows and macOS builds now ship on every release too. The macOS build isn't code-signed, so Gatekeeper will complain on first launch — right-click `TARDIS.app` → **Open**, or run `xattr -cr /Applications/TARDIS.app`.
 
 **What if I cancel halfway?**
 Temp files on both servers get cleaned up. No orphaned dumps drifting through space.
