@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -131,9 +132,9 @@ func (a *App) CheckForUpdate() UpdateInfo {
 	}
 
 	info.Latest = release.TagName
-	// find .deb asset
+	// find the asset matching this platform
 	for _, a := range release.Assets {
-		if strings.HasSuffix(a.Name, ".deb") {
+		if assetMatchesPlatform(a.Name) {
 			info.DownloadURL = a.BrowserDownloadURL
 			break
 		}
@@ -152,7 +153,27 @@ func (a *App) CheckForUpdate() UpdateInfo {
 
 // OpenURL opens a URL in the default browser.
 func (a *App) OpenURL(url string) {
-	exec.Command("xdg-open", url).Start()
+	switch goruntime.GOOS {
+	case "darwin":
+		exec.Command("open", url).Start()
+	case "windows":
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	default:
+		exec.Command("xdg-open", url).Start()
+	}
+}
+
+// assetMatchesPlatform reports whether a release asset name is the right
+// download for the OS this binary is running on.
+func assetMatchesPlatform(name string) bool {
+	switch goruntime.GOOS {
+	case "darwin":
+		return strings.Contains(name, "macos")
+	case "windows":
+		return strings.Contains(name, "windows")
+	default:
+		return strings.HasSuffix(name, ".deb")
+	}
 }
 
 func configPath() (string, error) {
