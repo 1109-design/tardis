@@ -144,11 +144,33 @@ func (a *App) CheckForUpdate() UpdateInfo {
 		info.DownloadURL = "https://github.com/h200137j/tardis/releases/latest"
 	}
 
-	// compare: strip leading 'v' for comparison
-	latest  := strings.TrimPrefix(release.TagName, "v")
-	cur     := strings.TrimPrefix(current, "v")
-	info.HasUpdate = latest != "" && cur != "dev" && latest != cur
+	info.HasUpdate = current != "dev" && isNewerVersion(release.TagName, current)
 	return info
+}
+
+// isNewerVersion reports whether tag a (e.g. "v1.2.0") is strictly newer than b.
+// Only newer releases count, so a client built from a tag that isn't marked
+// "latest" (e.g. a macOS-only release) is never offered a downgrade.
+func isNewerVersion(a, b string) bool {
+	pa := strings.Split(strings.TrimPrefix(a, "v"), ".")
+	pb := strings.Split(strings.TrimPrefix(b, "v"), ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var na, nb int
+		if i < len(pa) {
+			if _, err := fmt.Sscanf(pa[i], "%d", &na); err != nil {
+				return false
+			}
+		}
+		if i < len(pb) {
+			if _, err := fmt.Sscanf(pb[i], "%d", &nb); err != nil {
+				return false
+			}
+		}
+		if na != nb {
+			return na > nb
+		}
+	}
+	return false
 }
 
 // OpenURL opens a URL in the default browser.
@@ -574,13 +596,37 @@ func extractTableName(s string) string {
 	return s[i+1 : i+1+j]
 }
 
+// resolveMySQLBin finds the mysql client. Apps launched from Finder on macOS
+// get a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so a bare "mysql" also
+// checks the usual Homebrew / installer / XAMPP locations.
+func resolveMySQLBin(bin string) (string, error) {
+	path, err := exec.LookPath(bin)
+	if err == nil || strings.ContainsRune(bin, filepath.Separator) {
+		return path, err
+	}
+	for _, dir := range []string{
+		"/opt/homebrew/bin",
+		"/opt/homebrew/opt/mysql-client/bin",
+		"/usr/local/bin",
+		"/usr/local/opt/mysql-client/bin",
+		"/usr/local/mysql/bin",
+		"/opt/lampp/bin",
+		"/Applications/XAMPP/xamppfiles/bin",
+	} {
+		if p, e := exec.LookPath(filepath.Join(dir, bin)); e == nil {
+			return p, nil
+		}
+	}
+	return "", err
+}
+
 // streamingImport decompresses filePath and pipes it into mysql.
 // skipTables lists table names to exclude from the import.
 // onTable fires once per detected table (for log messages).
 // onBytes fires every 256 KB of compressed input read (for the progress bar).
 func streamingImport(ctx context.Context, filePath, mysqlBin string, args []string, skipTables []string, onTable func(ImportProgress), onBytes func(int64, int64)) error {
 	// ── 1. Validate binary path early so the error is actionable ──────────
-	resolvedBin, err := exec.LookPath(mysqlBin)
+	resolvedBin, err := resolveMySQLBin(mysqlBin)
 	if err != nil {
 		return fmt.Errorf("mysql binary not found at %q — check Settings > MySQL Binary Path", mysqlBin)
 	}

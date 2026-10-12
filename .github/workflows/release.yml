@@ -1,15 +1,41 @@
 name: Release
 
+# Tag push (v*) builds every platform and publishes the release as "latest".
+#
+# Manual run (Actions → Release → Run workflow) can build a subset of platforms.
+# A release missing any platform is NOT marked "latest", so installed apps on the
+# skipped platforms don't get an update banner for a build they can't use.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create (e.g. v1.1.1)'
+        required: true
+      linux:
+        description: 'Build Linux (.deb)'
+        type: boolean
+        default: true
+      windows:
+        description: 'Build Windows'
+        type: boolean
+        default: true
+      macos:
+        description: 'Build macOS'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
   build-deb:
+    if: github.event_name == 'push' || inputs.linux
     runs-on: ubuntu-22.04
 
     steps:
@@ -39,12 +65,11 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       - name: Build binary
-        run: ~/go/bin/wails build -tags webkit2_41 -ldflags "-X main.version=${{ github.ref_name }}"
+        run: ~/go/bin/wails build -tags webkit2_41 -ldflags "-X main.version=${TAG}"
 
       - name: Package .deb
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
+          VERSION="${TAG#v}"
           PKG="tardis_${VERSION}_amd64"
 
           mkdir -p "${PKG}/DEBIAN"
@@ -83,12 +108,114 @@ jobs:
 
           dpkg-deb --build --root-owner-group "${PKG}"
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: tardis_*.deb
+
+  build-macos:
+    if: github.event_name == 'push' || inputs.macos
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+
+      - name: Stamp version into wails.json
+        run: |
+          jq --arg v "${TAG#v}" '.info.productVersion = $v' wails.json > wails.json.tmp
+          mv wails.json.tmp wails.json
+
+      - name: Build macOS universal binary
+        run: ~/go/bin/wails build -platform darwin/universal -ldflags "-X main.version=${TAG}"
+
+      - name: Zip app bundle
+        run: ditto -c -k --sequesterRsrc --keepParent build/bin/TARDIS.app tardis-macos-universal.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: tardis-macos-universal.zip
+
+  build-windows:
+    if: github.event_name == 'push' || inputs.windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+
+      - name: Stamp version into wails.json
+        shell: bash
+        run: |
+          jq --arg v "${TAG#v}" '.info.productVersion = $v' wails.json > wails.json.tmp
+          mv wails.json.tmp wails.json
+
+      - name: Build Windows binary
+        shell: bash
+        run: ~/go/bin/wails build -ldflags "-X main.version=${TAG}"
+
+      - name: Zip executable
+        run: Compress-Archive -Path build/bin/tardis.exe -DestinationPath tardis-windows-amd64.zip
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: tardis-windows-amd64.zip
+
+  release:
+    needs: [build-deb, build-macos, build-windows]
+    # run when every selected build succeeded (skipped ones are fine)
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "TARDIS ${{ github.ref_name }}"
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: "TARDIS ${{ env.TAG }}"
+          make_latest: ${{ needs.build-deb.result == 'success' && needs.build-macos.result == 'success' && needs.build-windows.result == 'success' }}
+          files: dist/*
           body: |
-            ## TARDIS ${{ github.ref_name }}
+            ## TARDIS ${{ env.TAG }}
 
             ### Install (Linux)
             ```bash
@@ -110,67 +237,5 @@ jobs:
             This build isn't code-signed, so Gatekeeper will block it on first launch. Either:
             - Right-click (or Control-click) `TARDIS.app` → **Open** → **Open** again in the dialog, or
             - Run `xattr -cr /Applications/TARDIS.app` in Terminal, then open it normally.
-          files: tardis_*.deb
 
-  build-macos:
-    runs-on: macos-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Build macOS universal binary
-        run: ~/go/bin/wails build -platform darwin/universal -ldflags "-X main.version=${{ github.ref_name }}"
-
-      - name: Zip app bundle
-        run: ditto -c -k --sequesterRsrc --keepParent build/bin/TARDIS.app tardis-macos-universal.zip
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: tardis-macos-universal.zip
-
-  build-windows:
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
-
-      - name: Build Windows binary
-        run: ~/go/bin/wails build -ldflags "-X main.version=${{ github.ref_name }}"
-
-      - name: Zip executable
-        run: Compress-Archive -Path build/bin/tardis.exe -DestinationPath tardis-windows-amd64.zip
-        shell: pwsh
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: tardis-windows-amd64.zip
+            Needs the `mysql` client installed locally (e.g. `brew install mysql-client`). If it isn't found automatically, set **Settings → MySQL Binary Path**.

@@ -38,6 +38,8 @@ sudo dpkg -i tardis_*.deb
 sudo apt-get install -f
 ```
 
+**macOS:** grab `tardis-macos-universal.zip` from the newest release on the [Releases page](https://github.com/h200137j/tardis/releases), extract, and drag `TARDIS.app` into `/Applications`. It isn't code-signed, so the first launch needs right-click → **Open** (or `xattr -cr /Applications/TARDIS.app`). Needs a local `mysql` client — `brew install mysql-client` works; set **Settings → MySQL Binary Path** if it isn't found.
+
 ---
 
 ## Build from Source
